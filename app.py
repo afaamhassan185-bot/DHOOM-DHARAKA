@@ -1,54 +1,62 @@
 import os
-import datetime
-from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory
+from datetime import datetime
+from flask import Flask, render_template_string, request, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = 'dhoom_dhadaka_super_secret_key'
+app.config['SECRET_KEY'] = 'dhoom_dhadaka_no_google_secret_key_9304'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///dhoom_dhadaka.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = 'static/uploads'
 ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm', 'jpg', 'jpeg', 'png', 'gif'}
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-# 👑 OWNER/ADMIN ACCOUNT SETUP
-# आपके पर्सनल Google अकाउंट की ईमेल यहाँ सेट है
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'index'
+
+# 👑 OWNER/ADMIN EMAIL ID
 ADMIN_EMAIL = "afaampro15156@gmail.com"
 
-# इन-मेमोरी डेटा (Users, Banned Users, Posts, Messages)
-USERS = {}        # {email: {"name": name, "channel": channel_name, "picture": pic, "is_banned": False}}
-BANNED_USERS = set()
-POSTS = []
-MESSAGES = [
-    {"username": "System", "text": "धूम धड़ाका YouTube Edition में आपका स्वागत है! 🎉"}
-]
+# --- Database Models ---
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    channel_name = db.Column(db.String(100), nullable=False)
+    is_admin = db.Column(db.Boolean, default=False)
+    is_banned = db.Column(db.Boolean, default=False)
+    posts = db.relationship('Post', backref='author', lazy=True, cascade="all, delete-orphan")
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
+    media_type = db.Column(db.String(50), nullable=False)  # video, photo
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+class Message(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(100), nullable=False)
+    text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.before_request
-def check_ban_and_geo():
-    # 1. Geo-restriction Check (Only India)
-    country_code = request.headers.get('CF-IPCountry') or request.headers.get('X-AppEngine-Country')
-    if country_code and country_code.upper() != 'IN':
-        return """
-        <div style="background:#0f0f0f; color:#ff0055; text-align:center; padding:50px; font-family:sans-serif; height:100vh;">
-            <h1>⛔ Access Restricted</h1>
-            <p style="color:#fff; margin-top:15px; font-size:18px;">"धूम धड़ाका" केवल भारत (India) में उपलब्ध है।</p>
-        </div>
-        """, 403
-
-    # 2. Ban Check
-    user_email = session.get('user_email')
-    if user_email and user_email in BANNED_USERS:
-        return """
-        <div style="background:#111; color:#ff3333; text-align:center; padding:50px; font-family:sans-serif; height:100vh;">
-            <h1>🚫 आपका अकाउंट बैन कर दिया गया है!</h1>
-            <p style="color:#ccc; margin-top:15px;">आप इस प्लेटफ़ॉर्म पर नियम उल्लंघन के कारण बैन हैं। अधिक जानकारी के लिए एडमिन से संपर्क करें।</p>
-        </div>
-        """, 403
+# --- Frontend HTML Template ---
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -56,8 +64,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>धूम धड़ाका - YouTube Edition</title>
-    <link rel="manifest" href="/manifest.json">
+    <title>धूम धड़ाका - Official YouTube Style Platform</title>
     <style>
         :root {
             --bg-color: #ffffff;
@@ -67,7 +74,6 @@ HTML_TEMPLATE = """
             --header-bg: #ffffff;
             --accent-color: #ff0000;
         }
-
         [data-theme="dark"] {
             --bg-color: #0f0f0f;
             --card-bg: #1f1f1f;
@@ -76,148 +82,109 @@ HTML_TEMPLATE = """
             --header-bg: #121212;
             --accent-color: #ff0055;
         }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
+        body { background: var(--bg-color); color: var(--text-color); transition: 0.3s; padding-bottom: 30px; }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Roboto', 'Segoe UI', Arial, sans-serif; }
-        body { background: var(--bg-color); color: var(--text-color); transition: background 0.3s, color 0.3s; padding-bottom: 40px; }
-
-        /* Header / Navbar */
         header { background: var(--header-bg); padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); position: sticky; top: 0; z-index: 100; }
-        .logo-box { display: flex; align-items: center; gap: 10px; }
-        .logo-box h1 { font-size: 20px; color: var(--accent-color); font-weight: bold; letter-spacing: -0.5px; }
-        .theme-btn { background: none; border: 1px solid var(--border-color); color: var(--text-color); padding: 6px 12px; border-radius: 20px; cursor: pointer; font-size: 12px; }
-
-        .user-profile-header { display: flex; align-items: center; gap: 12px; }
-        .channel-badge { background: #0073e6; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
-        .admin-badge { background: #ffaa00; color: #000; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold; }
-
-        /* Layout Grid */
-        .main-container { display: flex; flex-wrap: wrap; gap: 20px; max-width: 1400px; margin: 20px auto; padding: 0 15px; }
-        .content-area { flex: 3; min-width: 320px; }
+        .logo { font-size: 22px; color: var(--accent-color); font-weight: bold; text-decoration: none; }
+        
+        .main-wrapper { display: flex; flex-wrap: wrap; gap: 20px; max-width: 1400px; margin: 20px auto; padding: 0 15px; }
+        .content-area { flex: 3; min-width: 300px; }
         .sidebar { flex: 1; min-width: 280px; }
 
-        /* Upload Section */
-        .upload-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 25px; }
-        .upload-card h3 { color: var(--accent-color); margin-bottom: 12px; font-size: 16px; }
-        .upload-form { display: flex; flex-direction: column; gap: 10px; }
-        .upload-form input, .upload-form select { padding: 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color); }
-        .upload-btn { background: var(--accent-color); color: #fff; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }
+        .upload-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; padding: 15px; margin-bottom: 20px; }
+        .upload-card input, .upload-card select, .upload-card button { width: 100%; padding: 10px; margin-top: 8px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .upload-card button { background: var(--accent-color); color: white; border: none; font-weight: bold; cursor: pointer; }
 
-        /* Videos Grid */
-        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
-        .card { background: var(--card-bg); border-radius: 12px; overflow: hidden; border: 1px solid var(--border-color); display: flex; flex-direction: column; }
-        .card media, .card video, .card img { width: 100%; height: 180px; object-fit: cover; background: #000; }
-        .card-body { padding: 12px; flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
-        .card-title { font-size: 15px; font-weight: bold; line-height: 1.3; margin-bottom: 6px; }
-        .card-author { font-size: 12px; color: #888; margin-bottom: 8px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
+        .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; overflow: hidden; }
+        .card video, .card img { width: 100%; height: 180px; object-fit: cover; background: #000; }
+        .card-body { padding: 10px; }
+        .card-title { font-weight: bold; margin-bottom: 5px; }
+        .card-meta { font-size: 12px; color: #777; }
 
-        /* Admin Controls */
-        .admin-actions { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border-color); display: flex; gap: 8px; }
-        .ban-btn { background: #cc0000; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
-        .delete-btn { background: #444; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; }
+        .admin-controls { margin-top: 10px; display: flex; gap: 10px; border-top: 1px dashed var(--border-color); padding-top: 5px; }
+        .btn-danger { background: #d9534f; color: white; border: none; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 11px; }
 
-        /* Live Chat */
-        .chat-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; height: 500px; display: flex; flex-direction: column; padding: 15px; }
-        .chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
-        .msg { background: var(--bg-color); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 13px; }
-        .msg-user { font-weight: bold; font-size: 12px; color: var(--accent-color); }
-        .chat-input { display: flex; gap: 8px; }
-        .chat-input input { flex: 1; padding: 8px 12px; border-radius: 20px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color); }
-        .chat-input button { background: var(--accent-color); color: white; border: none; padding: 8px 15px; border-radius: 20px; cursor: pointer; }
+        .chat-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; height: 500px; display: flex; flex-direction: column; padding: 12px; }
+        .chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .chat-msg { background: var(--bg-color); padding: 8px; border-radius: 6px; border: 1px solid var(--border-color); font-size: 13px; }
+        .chat-user { font-weight: bold; color: var(--accent-color); font-size: 11px; }
 
-        /* Auth Modal */
-        .login-box { background: var(--card-bg); border: 1px solid var(--border-color); padding: 25px; border-radius: 12px; text-align: center; max-width: 400px; margin: 40px auto; }
-        .google-btn { background: #4285F4; color: white; border: none; padding: 12px 20px; border-radius: 6px; font-weight: bold; cursor: pointer; width: 100%; margin-top: 15px; }
+        .login-box { max-width: 400px; margin: 50px auto; padding: 25px; background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; text-align: center; }
+        .login-box input { width: 100%; padding: 10px; margin-top: 10px; border-radius: 6px; border: 1px solid var(--border-color); }
+        .login-box button { width: 100%; padding: 10px; margin-top: 15px; background: var(--accent-color); color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; }
 
         @media (max-width: 768px) {
-            .main-container { flex-direction: column; }
+            .main-wrapper { flex-direction: column; }
         }
     </style>
 </head>
 <body>
 
     <header>
-        <div class="logo-box">
-            <h1>🔴 धूम धड़ाका</h1>
-            <button class="theme-btn" onclick="toggleTheme()">🌓 Theme</button>
-        </div>
-
-        <div class="user-profile-header">
-            {% if session.get('user_email') %}
-                <div>
-                    <strong>{{ session.get('user_name') }}</strong>
-                    <div style="font-size: 11px; color: #888;">{{ session.get('user_channel') }}</div>
-                </div>
-                {% if session.get('is_admin') %}
-                    <span class="admin-badge">👑 OWNER</span>
-                {% else %}
-                    <span class="channel-badge">CREATOR</span>
-                {% endif %}
-                <a href="/logout" style="color: red; font-size: 12px; text-decoration: none; margin-left: 10px;">Logout</a>
+        <a href="/" class="logo">🔴 धूम धड़ाका</a>
+        <div>
+            <button onclick="toggleTheme()" style="padding: 5px 10px; border-radius: 15px; cursor: pointer; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);">🌓 Mode</button>
+            {% if current_user.is_authenticated %}
+                <span style="margin-left: 10px; font-size: 14px;">👤 <b>{{ current_user.name }}</b> ({{ current_user.channel_name }})</span>
+                {% if current_user.is_admin %}<span style="background: gold; color: black; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">OWNER</span>{% endif %}
+                <a href="/logout" style="color: red; margin-left: 10px; text-decoration: none;">Logout</a>
             {% endif %}
         </div>
     </header>
 
-    {% if not session.get('user_email') %}
-    <!-- Google Account Setup / Login Form -->
+    {% if not current_user.is_authenticated %}
     <div class="login-box">
-        <h2 style="color: var(--accent-color); margin-bottom: 10px;">Google से साइन इन करें</h2>
-        <p style="font-size: 13px; color: #777;">अपना नाम और अपना नया YouTube स्टाइल चैनल बनाएँ!</p>
-        
-        <form action="/login" method="POST" style="margin-top: 20px; display: flex; flex-direction: column; gap: 12px;">
-            <input type="email" name="email" placeholder="Google Email ID (उदा: yourname@gmail.com)" required style="padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
-            <input type="text" name="name" placeholder="आपका नाम (Display Name)" required style="padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
-            <input type="text" name="channel" placeholder="चैनल का नाम (उदा: @MyVlogChannel)" required style="padding: 10px; border-radius: 6px; border: 1px solid var(--border-color);">
-            <button type="submit" class="google-btn">🌐 Continue to Platform</button>
+        <h2 style="color: var(--accent-color);">लॉगिन / अकाउंट बनाएं</h2>
+        <p style="font-size: 12px; color: #777; margin-top: 5px;">अपना नाम और चैनल बनाएं</p>
+        <form action="/login" method="POST">
+            <input type="email" name="email" placeholder="Email Address (उदा: test@gmail.com)" required>
+            <input type="text" name="name" placeholder="आपका पूरा नाम" required>
+            <input type="text" name="channel_name" placeholder="चैनल का नाम (उदा: @MyVlogs)" required>
+            <button type="submit">प्रवेश करें (Enter App)</button>
         </form>
     </div>
     {% else %}
 
-    <div class="main-container">
-        <!-- Main Videos & Post Feed -->
+    <div class="main-wrapper">
         <div class="content-area">
             
-            <!-- Channel Upload Form -->
             <div class="upload-card">
                 <h3>📹 अपने चैनल पर वीडियो/फोटो अपलोड करें</h3>
-                <form class="upload-form" action="/add-post" method="POST" enctype="multipart/form-data">
-                    <input type="text" name="title" placeholder="वीडियो या फोटो का टाइटल लिखें..." required>
-                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                        <input type="file" name="media_file" accept="video/*,image/*" required style="flex: 2;">
-                        <select name="type" style="flex: 1;">
-                            <option value="video">🎥 Full Video</option>
-                            <option value="short">⚡ Short Video</option>
-                            <option value="photo">🖼️ Photo Post</option>
-                        </select>
-                    </div>
-                    <button type="submit" class="upload-btn">Publish Post</button>
+                <form action="/upload" method="POST" enctype="multipart/form-data">
+                    <input type="text" name="title" placeholder="शीर्षक / डिस्क्रिप्टन लिखें..." required>
+                    <input type="file" name="file" accept="video/*,image/*" required>
+                    <select name="media_type">
+                        <option value="video">🎥 Video</option>
+                        <option value="photo">🖼️ Photo</option>
+                    </select>
+                    <button type="submit">Publish Now</button>
                 </form>
             </div>
 
-            <!-- Feed Section -->
-            <h2 style="font-size: 18px; margin-bottom: 15px; color: var(--accent-color);">🔥 Latest Videos & Content</h2>
-            <div class="grid">
+            <h2>🔥 Recent Feed</h2>
+            <div class="grid" style="margin-top: 15px;">
                 {% if posts | length == 0 %}
                     <p style="color: #777; font-style: italic;">अभी कोई पोस्ट अपलोड नहीं की गई है।</p>
                 {% else %}
-                    {% for item in posts %}
+                    {% for post in posts %}
                     <div class="card">
-                        {% if item.type == 'photo' %}
-                            <img src="/uploads/{{ item.filename }}" alt="Post Image">
+                        {% if post.media_type == 'photo' %}
+                            <img src="/static/uploads/{{ post.filename }}">
                         {% else %}
-                            <video controls src="/uploads/{{ item.filename }}"></video>
+                            <video controls src="/static/uploads/{{ post.filename }}"></video>
                         {% endif %}
                         <div class="card-body">
-                            <div>
-                                <div class="card-title">{{ item.title }}</div>
-                                <div class="card-author">👤 {{ item.author_name }} ({{ item.author_channel }})</div>
-                            </div>
-
-                            <!-- 👑 ADMIN CONTROLS (केवल आपके अकाउंट को दिखेगा) -->
-                            {% if session.get('is_admin') %}
-                            <div class="admin-actions">
-                                <a href="/delete-post/{{ item.id }}" class="delete-btn">🗑️ Delete</a>
-                                {% if item.author_email != session.get('user_email') %}
-                                <a href="/ban-user?email={{ item.author_email }}" class="ban-btn" onclick="return confirm('क्या आप इस यूज़र को बैन करना चाहते हैं?');">⛔ Ban User</a>
+                            <div class="card-title">{{ post.title }}</div>
+                            <div class="card-meta">By: {{ post.author.channel_name }}</div>
+                            
+                            <!-- 👑 OWNER CONTROL PANEL -->
+                            {% if current_user.is_admin %}
+                            <div class="admin-controls">
+                                <a href="/delete/{{ post.id }}" class="btn-danger">Delete Post</a>
+                                {% if post.author.email != current_user.email %}
+                                <a href="/ban/{{ post.author.id }}" class="btn-danger" onclick="return confirm('क्या आप इस यूजर को बैन करना चाहते हैं?');">Ban User</a>
                                 {% endif %}
                             </div>
                             {% endif %}
@@ -228,21 +195,20 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Right Side Live Chat & Admin Panel -->
         <div class="sidebar">
             <div class="chat-box">
-                <h3 style="font-size: 16px; margin-bottom: 10px; color: var(--accent-color);">💬 Live Community Chat</h3>
-                <div class="chat-messages" id="chatWindow">
+                <h3 style="color: var(--accent-color); margin-bottom: 10px;">💬 Live Chat Room</h3>
+                <div class="chat-messages" id="chat">
                     {% for msg in messages %}
-                    <div class="msg">
-                        <div class="msg-user">{{ msg.username }}</div>
+                    <div class="chat-msg">
+                        <div class="chat-user">{{ msg.username }}</div>
                         <div>{{ msg.text }}</div>
                     </div>
                     {% endfor %}
                 </div>
-                <form class="chat-input" action="/send-message" method="POST">
-                    <input type="text" name="text" placeholder="मैसेज भेजें..." required>
-                    <button type="submit">Send</button>
+                <form action="/send-msg" method="POST" style="margin-top: 10px; display: flex; gap: 5px;">
+                    <input type="text" name="text" placeholder="मैसेज लिखें..." required style="flex: 1; padding: 8px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-color); color: var(--text-color);">
+                    <button type="submit" style="background: var(--accent-color); color: white; border: none; padding: 8px 12px; border-radius: 4px; font-weight: bold; cursor: pointer;">Send</button>
                 </form>
             </div>
         </div>
@@ -250,128 +216,117 @@ HTML_TEMPLATE = """
     {% endif %}
 
     <script>
-        // Automatic Day / Night Theme Selector
+        // Automatic Day (Light) and Night (Dark) Mode
         function autoTheme() {
-            const hour = new Date().getHours();
-            // रात 7 बजे से सुबह 6 बजे तक डार्क मोड, बाकी समय लाइट मोड
-            if (hour >= 19 || hour < 6) {
-                document.documentElement.setAttribute('data-theme', 'dark');
-            } else {
-                document.documentElement.setAttribute('data-theme', 'light');
-            }
+            const h = new Date().getHours();
+            document.documentElement.setAttribute('data-theme', (h >= 19 || h < 6) ? 'dark' : 'light');
         }
-
         function toggleTheme() {
-            const current = document.documentElement.getAttribute('data-theme');
-            const next = current === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', next);
+            const c = document.documentElement.getAttribute('data-theme');
+            document.documentElement.setAttribute('data-theme', c === 'dark' ? 'light' : 'dark');
         }
-
-        // Run theme setup on load
         autoTheme();
-
-        // Scroll chat to bottom
-        let chatWindow = document.getElementById('chatWindow');
-        if (chatWindow) { chatWindow.scrollTop = chatWindow.scrollHeight; }
+        const chat = document.getElementById('chat');
+        if(chat) chat.scrollTop = chat.scrollHeight;
     </script>
 </body>
 </html>
 """
 
+# --- App Routes ---
+
 @app.route('/')
-def home():
-    return render_template_string(HTML_TEMPLATE, posts=POSTS, messages=MESSAGES)
+def index():
+    if current_user.is_authenticated and current_user.is_banned:
+        logout_user()
+        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आप इस प्लेटफॉर्म पर बैन किए गए हैं।</h1>", 403
+    
+    posts = Post.query.order_by(Post.created_at.desc()).all()
+    messages = Message.query.order_by(Message.created_at.asc()).all()
+    return render_template_string(HTML_TEMPLATE, posts=posts, messages=messages)
 
 @app.route('/login', methods=['POST'])
 def login():
     email = request.form.get('email').strip().lower()
     name = request.form.get('name')
-    channel = request.form.get('channel')
+    channel_name = request.form.get('channel_name')
 
-    session['user_email'] = email
-    session['user_name'] = name
-    session['user_channel'] = channel
+    user = User.query.filter_by(email=email).first()
 
-    # 👑 चेक करें कि क्या यह आपका पर्सनल एडमिन अकाउंट है
-    session['is_admin'] = (email == ADMIN_EMAIL.lower())
+    if not user:
+        is_admin = (email == ADMIN_EMAIL.lower())
+        user = User(email=email, name=name, channel_name=channel_name, is_admin=is_admin)
+        db.session.add(user)
+        db.session.commit()
 
-    USERS[email] = {"name": name, "channel": channel}
-    return redirect(url_for('home'))
+    if user.is_banned:
+        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आपका अकाउंट बैन है!</h1>", 403
+
+    login_user(user)
+    return redirect(url_for('index'))
 
 @app.route('/logout')
+@login_required
 def logout():
-    session.clear()
-    return redirect(url_for('home'))
+    logout_user()
+    return redirect(url_for('index'))
 
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
-
-@app.route('/add-post', methods=['POST'])
-def add_post():
-    if not session.get('user_email'):
-        return redirect(url_for('home'))
-
+@app.route('/upload', methods=['POST'])
+@login_required
+def upload():
     title = request.form.get('title')
-    post_type = request.form.get('type')
-
-    if 'media_file' not in request.files:
-        return redirect(url_for('home'))
-
-    file = request.files['media_file']
+    media_type = request.form.get('media_type')
+    file = request.files.get('file')
 
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
+        filename = f"{datetime.now().timestamp()}_{filename}"
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
-        POSTS.append({
-            "id": str(len(POSTS) + 1),
-            "title": title,
-            "filename": filename,
-            "type": post_type,
-            "author_email": session.get('user_email'),
-            "author_name": session.get('user_name'),
-            "author_channel": session.get('user_channel')
-        })
+        post = Post(title=title, filename=filename, media_type=media_type, author=current_user)
+        db.session.add(post)
+        db.session.commit()
 
-    return redirect(url_for('home'))
+    return redirect(url_for('index'))
 
-@app.route('/send-message', methods=['POST'])
-def send_message():
-    if not session.get('user_email'):
-        return redirect(url_for('home'))
-
+@app.route('/send-msg', methods=['POST'])
+@login_required
+def send_msg():
     text = request.form.get('text')
     if text:
-        MESSAGES.append({
-            "username": f"{session.get('user_name')} ({session.get('user_channel')})",
-            "text": text
-        })
-    return redirect(url_for('home'))
+        msg = Message(username=f"{current_user.name} ({current_user.channel_name})", text=text)
+        db.session.add(msg)
+        db.session.commit()
+    return redirect(url_for('index'))
 
-# 👑 ADMIN ACTIONS (केवल आपके लिए)
-@app.route('/ban-user')
-def ban_user():
-    if not session.get('is_admin'):
+# 👑 OWNER/ADMIN ONLY: BAN USER
+@app.route('/ban/<int:user_id>')
+@login_required
+def ban_user(user_id):
+    if not current_user.is_admin:
         return "Unauthorized", 403
-    
-    email_to_ban = request.args.get('email')
-    if email_to_ban and email_to_ban != ADMIN_EMAIL:
-        BANNED_USERS.add(email_to_ban)
-        # बैन किए गए यूज़र की सभी पोस्ट्स को भी हटा दें
-        global POSTS
-        POSTS = [p for p in POSTS if p['author_email'] != email_to_ban]
-        
-    return redirect(url_for('home'))
 
-@app.route('/delete-post/<post_id>')
+    user = User.query.get_or_404(user_id)
+    if not user.is_admin:
+        user.is_banned = True
+        Post.query.filter_by(user_id=user.id).delete()
+        db.session.commit()
+
+    return redirect(url_for('index'))
+
+# 👑 OWNER/ADMIN ONLY: DELETE POST
+@app.route('/delete/<int:post_id>')
+@login_required
 def delete_post(post_id):
-    if not session.get('is_admin'):
+    if not current_user.is_admin:
         return "Unauthorized", 403
-    
-    global POSTS
-    POSTS = [p for p in POSTS if p['id'] != post_id]
-    return redirect(url_for('home'))
+
+    post = Post.query.get_or_404(post_id)
+    db.session.delete(post)
+    db.session.commit()
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    with app.app_context():
+        db.create_all()
+    app.run(host='0.0.0.0', port=5000, debug=True)
