@@ -1,70 +1,44 @@
 import os
+import time
 from datetime import datetime
-from flask import Flask, render_template_string, request, redirect, url_for
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'dhoom_dhadaka_no_google_secret_key_9304'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///dhoom_dhadaka.db'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.secret_key = 'dhoom_dhadaka_ultra_clean_key_2026'
 
-UPLOAD_FOLDER = 'static/uploads'
+# अपलोड फोल्डर कॉन्फ़िगरेशन
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 ALLOWED_EXTENSIONS = {'mp4', 'mov', 'avi', 'mkv', 'webm', 'jpg', 'jpeg', 'png', 'gif'}
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-db = SQLAlchemy(app)
-login_manager = LoginManager(app)
-login_manager.login_view = 'index'
-
-# 👑 OWNER/ADMIN EMAIL ID
+# 👑 OWNER / ADMIN EMAIL ID
 ADMIN_EMAIL = "afaampro15156@gmail.com"
 
-# --- Database Models ---
-
-class User(UserMixin, db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    name = db.Column(db.String(100), nullable=False)
-    channel_name = db.Column(db.String(100), nullable=False)
-    is_admin = db.Column(db.Boolean, default=False)
-    is_banned = db.Column(db.Boolean, default=False)
-    posts = db.relationship('Post', backref='author', lazy=True, cascade="all, delete-orphan")
-
-class Post(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(255), nullable=False)
-    filename = db.Column(db.String(255), nullable=False)
-    media_type = db.Column(db.String(50), nullable=False)  # video, photo
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-
-class Message(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(100), nullable=False)
-    text = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
+# इन-मेमोरी डेटा स्टोरेज
+USERS = {}         # {email: {"name": name, "channel": channel}}
+BANNED_EMAILS = set()
+POSTS = []
+MESSAGES = [
+    {"username": "System", "text": "धूम धड़ाका ऐप में आपका स्वागत है! 🎉"}
+]
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# --- Frontend HTML Template ---
-
+# HTML / CSS / JavaScript टेंप्लेट
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="hi" data-theme="auto">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>धूम धड़ाका - Official YouTube Style Platform</title>
+    <title>धूम धड़ाका - All In One Social Platform</title>
     <style>
         :root {
             --bg-color: #ffffff;
@@ -104,7 +78,7 @@ HTML_TEMPLATE = """
         .card-meta { font-size: 12px; color: #777; }
 
         .admin-controls { margin-top: 10px; display: flex; gap: 10px; border-top: 1px dashed var(--border-color); padding-top: 5px; }
-        .btn-danger { background: #d9534f; color: white; border: none; padding: 4px 8px; border-radius: 4px; text-decoration: none; font-size: 11px; }
+        .btn-danger { background: #d9534f; color: white; border: none; padding: 5px 10px; border-radius: 4px; text-decoration: none; font-size: 11px; font-weight: bold; cursor: pointer; }
 
         .chat-box { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 10px; height: 500px; display: flex; flex-direction: column; padding: 12px; }
         .chat-messages { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -126,18 +100,18 @@ HTML_TEMPLATE = """
         <a href="/" class="logo">🔴 धूम धड़ाका</a>
         <div>
             <button onclick="toggleTheme()" style="padding: 5px 10px; border-radius: 15px; cursor: pointer; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-color);">🌓 Mode</button>
-            {% if current_user.is_authenticated %}
-                <span style="margin-left: 10px; font-size: 14px;">👤 <b>{{ current_user.name }}</b> ({{ current_user.channel_name }})</span>
-                {% if current_user.is_admin %}<span style="background: gold; color: black; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;">OWNER</span>{% endif %}
+            {% if session.get('user_email') %}
+                <span style="margin-left: 10px; font-size: 14px;">👤 <b>{{ session.get('user_name') }}</b> ({{ session.get('user_channel') }})</span>
+                {% if session.get('is_admin') %}<span style="background: gold; color: black; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; margin-left:5px;">OWNER</span>{% endif %}
                 <a href="/logout" style="color: red; margin-left: 10px; text-decoration: none;">Logout</a>
             {% endif %}
         </div>
     </header>
 
-    {% if not current_user.is_authenticated %}
+    {% if not session.get('user_email') %}
     <div class="login-box">
         <h2 style="color: var(--accent-color);">लॉगिन / अकाउंट बनाएं</h2>
-        <p style="font-size: 12px; color: #777; margin-top: 5px;">अपना नाम और चैनल बनाएं</p>
+        <p style="font-size: 12px; color: #777; margin-top: 5px;">अपना नाम और चैनल बनाकर एंटर करें</p>
         <form action="/login" method="POST">
             <input type="email" name="email" placeholder="Email Address (उदा: test@gmail.com)" required>
             <input type="text" name="name" placeholder="आपका पूरा नाम" required>
@@ -171,20 +145,20 @@ HTML_TEMPLATE = """
                     {% for post in posts %}
                     <div class="card">
                         {% if post.media_type == 'photo' %}
-                            <img src="/static/uploads/{{ post.filename }}">
+                            <img src="/get-file/{{ post.filename }}">
                         {% else %}
-                            <video controls src="/static/uploads/{{ post.filename }}"></video>
+                            <video controls src="/get-file/{{ post.filename }}"></video>
                         {% endif %}
                         <div class="card-body">
                             <div class="card-title">{{ post.title }}</div>
-                            <div class="card-meta">By: {{ post.author.channel_name }}</div>
+                            <div class="card-meta">By: {{ post.author_channel }}</div>
                             
                             <!-- 👑 OWNER CONTROL PANEL -->
-                            {% if current_user.is_admin %}
+                            {% if session.get('is_admin') %}
                             <div class="admin-controls">
-                                <a href="/delete/{{ post.id }}" class="btn-danger">Delete Post</a>
-                                {% if post.author.email != current_user.email %}
-                                <a href="/ban/{{ post.author.id }}" class="btn-danger" onclick="return confirm('क्या आप इस यूजर को बैन करना चाहते हैं?');">Ban User</a>
+                                <a href="/delete-post/{{ post.id }}" class="btn-danger">Delete Post</a>
+                                {% if post.author_email != session.get('user_email') %}
+                                <a href="/ban-user?email={{ post.author_email }}" class="btn-danger" onclick="return confirm('क्या आप इस यूजर को बैन करना चाहते हैं?');">Ban User</a>
                                 {% endif %}
                             </div>
                             {% endif %}
@@ -216,7 +190,7 @@ HTML_TEMPLATE = """
     {% endif %}
 
     <script>
-        // Automatic Day (Light) and Night (Dark) Mode
+        // Auto Light & Dark Mode according to time
         function autoTheme() {
             const h = new Date().getHours();
             document.documentElement.setAttribute('data-theme', (h >= 19 || h < 6) ? 'dark' : 'light');
@@ -233,100 +207,105 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- App Routes ---
+# --- Routes ---
 
 @app.route('/')
 def index():
-    if current_user.is_authenticated and current_user.is_banned:
-        logout_user()
-        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आप इस प्लेटफॉर्म पर बैन किए गए हैं।</h1>", 403
+    user_email = session.get('user_email')
+    if user_email and user_email in BANNED_EMAILS:
+        session.clear()
+        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आप इस प्लेटफॉर्म पर बैन कर दिए गए हैं।</h1>", 403
     
-    posts = Post.query.order_by(Post.created_at.desc()).all()
-    messages = Message.query.order_by(Message.created_at.asc()).all()
-    return render_template_string(HTML_TEMPLATE, posts=posts, messages=messages)
+    return render_template_string(HTML_TEMPLATE, posts=POSTS, messages=MESSAGES)
 
 @app.route('/login', methods=['POST'])
 def login():
-    email = request.form.get('email').strip().lower()
-    name = request.form.get('name')
-    channel_name = request.form.get('channel_name')
+    email = request.form.get('email', '').strip().lower()
+    name = request.form.get('name', '').strip()
+    channel = request.form.get('channel_name', '').strip()
 
-    user = User.query.filter_by(email=email).first()
+    if email in BANNED_EMAILS:
+        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आपका ईमेल बैन है!</h1>", 403
 
-    if not user:
-        is_admin = (email == ADMIN_EMAIL.lower())
-        user = User(email=email, name=name, channel_name=channel_name, is_admin=is_admin)
-        db.session.add(user)
-        db.session.commit()
+    session['user_email'] = email
+    session['user_name'] = name
+    session['user_channel'] = channel
+    session['is_admin'] = (email == ADMIN_EMAIL.lower())
 
-    if user.is_banned:
-        return "<h1 style='color:red; text-align:center; margin-top:50px;'>⛔ आपका अकाउंट बैन है!</h1>", 403
-
-    login_user(user)
+    USERS[email] = {"name": name, "channel": channel}
     return redirect(url_for('index'))
 
 @app.route('/logout')
-@login_required
 def logout():
-    logout_user()
+    session.clear()
     return redirect(url_for('index'))
 
 @app.route('/upload', methods=['POST'])
-@login_required
 def upload():
+    if not session.get('user_email'):
+        return redirect(url_for('index'))
+
     title = request.form.get('title')
     media_type = request.form.get('media_type')
     file = request.files.get('file')
 
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
-        filename = f"{datetime.now().timestamp()}_{filename}"
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
+        unique_filename = f"{int(time.time())}_{filename}"
+        file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
 
-        post = Post(title=title, filename=filename, media_type=media_type, author=current_user)
-        db.session.add(post)
-        db.session.commit()
+        POSTS.insert(0, {
+            "id": str(len(POSTS) + 1),
+            "title": title,
+            "filename": unique_filename,
+            "media_type": media_type,
+            "author_email": session.get('user_email'),
+            "author_name": session.get('user_name'),
+            "author_channel": session.get('user_channel')
+        })
 
     return redirect(url_for('index'))
+
+@app.route('/get-file/<filename>')
+def get_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/send-msg', methods=['POST'])
-@login_required
 def send_msg():
+    if not session.get('user_email'):
+        return redirect(url_for('index'))
+
     text = request.form.get('text')
     if text:
-        msg = Message(username=f"{current_user.name} ({current_user.channel_name})", text=text)
-        db.session.add(msg)
-        db.session.commit()
+        MESSAGES.append({
+            "username": f"{session.get('user_name')} ({session.get('user_channel')})",
+            "text": text
+        })
     return redirect(url_for('index'))
 
-# 👑 OWNER/ADMIN ONLY: BAN USER
-@app.route('/ban/<int:user_id>')
-@login_required
-def ban_user(user_id):
-    if not current_user.is_admin:
+# 👑 OWNER ONLY: BAN USER
+@app.route('/ban-user')
+def ban_user():
+    if not session.get('is_admin'):
         return "Unauthorized", 403
 
-    user = User.query.get_or_404(user_id)
-    if not user.is_admin:
-        user.is_banned = True
-        Post.query.filter_by(user_id=user.id).delete()
-        db.session.commit()
+    email_to_ban = request.args.get('email')
+    if email_to_ban and email_to_ban != ADMIN_EMAIL:
+        BANNED_EMAILS.add(email_to_ban.lower())
+        global POSTS
+        POSTS = [p for p in POSTS if p['author_email'] != email_to_ban]
 
     return redirect(url_for('index'))
 
-# 👑 OWNER/ADMIN ONLY: DELETE POST
-@app.route('/delete/<int:post_id>')
-@login_required
+# 👑 OWNER ONLY: DELETE POST
+@app.route('/delete-post/<post_id>')
 def delete_post(post_id):
-    if not current_user.is_admin:
+    if not session.get('is_admin'):
         return "Unauthorized", 403
 
-    post = Post.query.get_or_404(post_id)
-    db.session.delete(post)
-    db.session.commit()
+    global POSTS
+    POSTS = [p for p in POSTS if p['id'] != post_id]
     return redirect(url_for('index'))
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
