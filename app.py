@@ -1,11 +1,9 @@
-from flask import Flask, render_template_string, request, jsonify, redirect, url_for
+from flask import Flask, render_template_string, request, redirect, url_for
 
 app = Flask(__name__)
 
-# खाली लिस्ट - शुरुआत में कोई डमी या टेस्ट वीडियो नहीं रहेगा
 VIDEOS = []
 
-# India-Only Access Restriction
 @app.before_request
 def restrict_to_india():
     country_code = request.headers.get('CF-IPCountry') or request.headers.get('X-AppEngine-Country')
@@ -14,7 +12,7 @@ def restrict_to_india():
         <div style="background:#0f0f0f; color:#ff0055; text-align:center; padding:50px; font-family:sans-serif; height:100vh;">
             <h1>⛔ Access Restricted</h1>
             <p style="color:#fff; margin-top:15px; font-size:18px;">
-                "धूम धड़ाका" (SYED BROTHER VLOG) केवल भारत (India) में उपलब्ध है।
+                "धूम धड़ाका" केवल भारत (India) में उपलब्ध है।
             </p>
         </div>
         """, 403
@@ -27,6 +25,7 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>धूम धड़ाका - SYED BROTHER VLOG</title>
     <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#ff0055">
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', sans-serif; }
         body { background: #0f0f0f; color: #fff; padding-bottom: 30px; }
@@ -34,6 +33,12 @@ HTML_TEMPLATE = """
         header h1 { color: #ff0055; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
         header p { color: #aaa; font-size: 12px; margin-top: 4px; }
         
+        .offline-bar { background: #ffaa00; color: #000; text-align: center; padding: 10px; font-weight: bold; font-size: 14px; display: none; align-items: center; justify-content: center; gap: 15px; }
+        .offline-bar button { background: #000; color: #fff; border: none; padding: 5px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+
+        .game-container { display: none; max-width: 800px; margin: 20px auto; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 2px solid #ffaa00; text-align: center; }
+        .game-container iframe { width: 100%; height: 450px; border: none; border-radius: 6px; }
+
         .upload-section { max-width: 800px; margin: 20px auto; background: #1a1a1a; padding: 15px; border-radius: 8px; border: 1px dashed #ff0055; }
         .upload-section h3 { color: #ff0055; margin-bottom: 10px; font-size: 16px; }
         .upload-form { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -47,7 +52,7 @@ HTML_TEMPLATE = """
         .section-title { font-size: 18px; margin: 20px 0 10px; color: #ff0055; border-left: 4px solid #ff0055; padding-left: 8px; }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
         .card { background: #1e1e1e; border-radius: 10px; overflow: hidden; position: relative; border: 1px solid #2a2a2a; }
-        .card iframe { width: 100%; height: 200px; border: none; }
+        .card iframe, .card video { width: 100%; height: 200px; border: none; }
         .card-info { padding: 12px; }
         .card-title { font-size: 14px; font-weight: bold; }
         .empty-msg { color: #666; font-style: italic; padding: 15px 0; }
@@ -64,16 +69,26 @@ HTML_TEMPLATE = """
 </head>
 <body>
 
+    <div id="offlineBar" class="offline-bar">
+        <span>⚠️ आप ऑफ़लाइन हैं! बोर मत होइए, गेम खेलिए:</span>
+        <button onclick="toggleGame()">🎮 Play Sprunki Game</button>
+    </div>
+
     <header>
         <h1>💥 धूम धड़ाका 💥</h1>
         <p>Official Platform for SYED BROTHER VLOG (@afaampro15156)</p>
     </header>
 
+    <div id="gameSection" class="game-container">
+        <h3 style="color:#ffaa00; margin-bottom:10px;">🎶 Sprunki Offline Music Game</h3>
+        <iframe src="https://sprunki.org/game-frame" id="sprunkiFrame"></iframe>
+    </div>
+
     <div class="upload-section">
         <h3>➕ नया वीडियो पब्लिश करें</h3>
         <form class="upload-form" action="/add-video" method="POST">
             <input type="text" name="title" placeholder="वीडियो का शीर्षक (Title)" required>
-            <input type="text" name="youtube_id" placeholder="YouTube Video ID (उदा: dQw4w9WgXcQ)" required>
+            <input type="text" name="video_url" placeholder="Direct MP4 Video URL या YouTube ID" required>
             <select name="type">
                 <option value="video">Full Length Video</option>
                 <option value="short">Short Video</option>
@@ -106,7 +121,11 @@ HTML_TEMPLATE = """
                             <button onclick="openModal()">₹29 में Unlock करें</button>
                         </div>
                     {% else %}
-                        <iframe src="https://www.youtube.com/embed/{{ item.youtube_id }}" allowfullscreen></iframe>
+                        {% if 'http' in item.video_url %}
+                            <video controls src="{{ item.video_url }}"></video>
+                        {% else %}
+                            <iframe src="https://www.youtube.com/embed/{{ item.video_url }}" allowfullscreen></iframe>
+                        {% endif %}
                     {% endif %}
                     <div class="card-info">
                         <div class="card-title">{{ item.title }}</div>
@@ -131,7 +150,11 @@ HTML_TEMPLATE = """
                             <button onclick="openModal()">Unlock करें</button>
                         </div>
                     {% else %}
-                        <iframe src="https://www.youtube.com/embed/{{ item.youtube_id }}" allowfullscreen></iframe>
+                        {% if 'http' in item.video_url %}
+                            <video controls src="{{ item.video_url }}"></video>
+                        {% else %}
+                            <iframe src="https://www.youtube.com/embed/{{ item.video_url }}" allowfullscreen></iframe>
+                        {% endif %}
                     {% endif %}
                     <div class="card-info">
                         <div class="card-title">{{ item.title }}</div>
@@ -154,6 +177,30 @@ HTML_TEMPLATE = """
     </div>
 
     <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW Error:', err));
+            });
+        }
+
+        window.addEventListener('online', () => {
+            document.getElementById('offlineBar').style.display = 'none';
+            document.getElementById('gameSection').style.display = 'none';
+        });
+        
+        window.addEventListener('offline', () => {
+            document.getElementById('offlineBar').style.display = 'flex';
+        });
+
+        function toggleGame() {
+            let game = document.getElementById('gameSection');
+            if (game.style.display === 'block') {
+                game.style.display = 'none';
+            } else {
+                game.style.display = 'block';
+            }
+        }
+
         function filterVideos() {
             let input = document.getElementById('searchInput').value.toLowerCase();
             let items = document.getElementsByClassName('video-item');
@@ -183,18 +230,39 @@ HTML_TEMPLATE = """
 def home():
     return render_template_string(HTML_TEMPLATE, videos=VIDEOS)
 
+@app.route('/sw.js')
+def service_worker():
+    sw_code = """
+    const CACHE_NAME = 'dhoom-dhadaka-v2';
+    self.addEventListener('install', (e) => {
+        e.waitUntil(
+            caches.open(CACHE_NAME).then((cache) => {
+                return cache.addAll(['/', 'https://sprunki.org/game-frame']);
+            })
+        );
+    });
+    self.addEventListener('fetch', (e) => {
+        e.respondWith(
+            caches.match(e.request).then((res) => {
+                return res || fetch(e.request);
+            })
+        );
+    });
+    """
+    return sw_code, 200, {'Content-Type': 'application/javascript'}
+
 @app.route('/add-video', methods=['POST'])
 def add_video():
     title = request.form.get('title')
-    youtube_id = request.form.get('youtube_id')
+    video_url = request.form.get('video_url')
     video_type = request.form.get('type')
     is_pro = request.form.get('is_pro') == 'true'
 
-    if title and youtube_id:
+    if title and video_url:
         VIDEOS.append({
             "id": str(len(VIDEOS) + 1),
             "title": title,
-            "youtube_id": youtube_id,
+            "video_url": video_url,
             "type": video_type,
             "is_pro": is_pro
         })
